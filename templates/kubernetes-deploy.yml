@@ -1,0 +1,139 @@
+spec:
+  inputs:
+    stage:
+      default: deploy
+    environment:
+      default: development
+    cluster:
+      default: st1k8s01
+    helm-values:
+      default: ""
+    helm-args:
+      default: ""
+    helm-chart:
+      default: kubernetes
+    helm-release-name:
+      default: ""
+    helm-repo:
+      default: ""
+    helm-atomic:
+      type: boolean
+      default: false
+    helm-wait:
+      type: boolean
+      default: true
+    namespace:
+      default: ""
+    create-namespace:
+      type: boolean
+      default: true
+    job-image:
+      default: $KUBERNETES_IMAGE
+    environment-url:
+      default: ""
+    create-pull-secret:
+      type: boolean
+      default: true
+    debug:
+      type: boolean
+      default: false
+    dependencies:
+      type: array
+      default: []
+---
+$[[ inputs.environment ]]:
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.job-image ]]
+  environment:
+    name: $[[ inputs.environment ]]
+    url: $ENVIRONMENT_URL
+  variables:
+    FF_SCRIPT_SECTIONS: true
+    ENVIRONMENT: $[[ inputs.environment ]]
+    INPUT_NAMESPACE: $[[ inputs.namespace ]]
+    INPUT_HELM_REPO: $[[ inputs.helm-repo ]]
+    INPUT_HELM_VALUES: $[[ inputs.helm-values ]]
+    INPUT_HELM_RELEASE_NAME: $[[ inputs.helm-release-name ]]
+  dependencies: $[[ inputs.dependencies ]]
+  script: |
+    #!/bin/bash -eu
+    if [[ "$[[ inputs.debug ]]" = true ]]; then
+      set -x
+      HELM_DEBUG="--debug"
+    else
+      HELM_DEBUG=""
+    fi
+
+    PROJECT_NAME=$(echo $CI_PROJECT_NAME | tr '[A-Z]' '[a-z]' | tr '_' '-')
+
+    if [[ -n $INPUT_NAMESPACE ]]; then
+      NAMESPACE=$INPUT_NAMESPACE
+    else
+      NAMESPACE=${PROJECT_NAME}-${ENVIRONMENT}
+    fi
+
+    if [[ "$[[ inputs.create-namespace ]]" = true ]]; then
+      kubectl create ns $NAMESPACE 2>/dev/null || true
+    fi
+
+    if [[ "$[[ inputs.create-pull-secret ]]" = true ]]; then
+      kubectl -n $NAMESPACE create secret docker-registry gitlab-registry --docker-server=${CI_REGISTRY} --docker-username=${CI_DEPLOY_USER} --docker-password=${CI_DEPLOY_PASSWORD} --dry-run=client -o yaml | kubectl apply -f-
+    fi
+
+    if [[ "$[[ inputs.helm-atomic ]]" = true ]]; then
+      HELM_ATOMIC="--atomic"
+    else
+      HELM_ATOMIC=""
+    fi
+
+    if [[ "$[[ inputs.helm-wait ]]" = true ]]; then
+      HELM_WAIT="--wait"
+    else
+      HELM_WAIT=""
+    fi
+
+    if [[ -n $INPUT_HELM_REPO ]]; then
+      helm repo add --username gitlab-ci-token --password $CI_JOB_TOKEN helm-repo $INPUT_HELM_REPO
+      HELM_CHART=helm-repo/$[[ inputs.helm-chart ]]
+    else
+      HELM_CHART=$[[ inputs.helm-chart ]]
+    fi
+
+    if [[ -n $INPUT_HELM_VALUES ]]; then
+      HELM_VALUES="-f $INPUT_HELM_VALUES"
+    else
+      HELM_VALUES=""
+    fi
+
+    if [[ -n $INPUT_HELM_RELEASE_NAME ]]; then
+      HELM_RELEASE_NAME=$INPUT_HELM_RELEASE_NAME
+    else
+      HELM_RELEASE_NAME=${PROJECT_NAME}-${ENVIRONMENT}
+    fi
+
+    echo "Running
+      helm -n $NAMESPACE upgrade --install $HELM_RELEASE_NAME $HELM_CHART $HELM_ATOMIC $HELM_WAIT $HELM_VALUES $[[ inputs.helm-args ]]
+      "
+
+    helm -n $NAMESPACE upgrade --install \
+      $HELM_RELEASE_NAME \
+      $HELM_CHART \
+      $HELM_ATOMIC \
+      $HELM_WAIT \
+      $HELM_VALUES \
+      $[[ inputs.helm-args ]] \
+      $HELM_DEBUG
+
+    INPUT_ENVIRONMENT_URL=$[[ inputs.environment-url ]]
+    if [[ -n $INPUT_ENVIRONMENT_URL ]]; then
+      echo "ENVIRONMENT_URL=$INPUT_ENVIRONMENT_URL" > environment_url.env
+      echo "$INPUT_ENVIRONMENT_URL" > environment_url.txt
+    fi
+
+  artifacts:
+    when: on_success
+    paths: [environment_url.txt]
+    reports:
+      dotenv: environment_url.env
+  tags:
+  - $[[ inputs.cluster ]]

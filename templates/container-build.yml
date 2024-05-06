@@ -1,0 +1,65 @@
+spec:
+  inputs:
+    name:
+      description: Job name
+      default: container-build
+    containerfile:
+      description: Containerfile path
+      default: Containerfile
+    runner:
+      description: Runner tag used
+      default: aws
+    builder-image:
+      description: Image used as a container builder
+      default: gcr.io/kaniko-project/executor:debug
+    image:
+      description: Destination container image
+      default: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_BRANCH}
+    target:
+      description: Indicates which build stage is the target build stage
+      default: ""
+    kaniko-extra-args:
+      description: Extra args passed to Kaniko executor
+      default: ""
+    kaniko-cache:
+      description: Use Kaniko cache or not, true or false.
+      type: boolean
+      default: false
+    kaniko-cache-repo:
+      description: Kaniko cache image repository
+      default: $CI_REGISTRY_IMAGE/cache
+---
+$[[ inputs.name ]]:
+  stage: build
+  image:
+    name: $[[ inputs.builder-image ]]
+    entrypoint: [""]
+  variables:
+    GODEBUG: "http2client=0" #https://github.com/GoogleContainerTools/kaniko/issues/2751
+    FF_SCRIPT_SECTIONS: true
+    INPUT_TARGET: $[[ inputs.target ]]
+  before_script:
+  - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+  script: |
+    if [ -n $INPUT_TARGET ]; then
+      TARGET="--target=$INPUT_TARGET"
+    else
+      TARGET=""
+    fi
+
+    if [ "$[[ inputs.kaniko-cache ]]" = true ]; then
+      CACHE="--cache=true --cache-repo=$[[ inputs.kaniko-cache-repo ]]"
+    else
+      CACHE=""
+    fi
+
+    CONTEXT="--context=$CI_PROJECT_DIR"
+    DOCKERFILE="--dockerfile=${CI_PROJECT_DIR}/$[[ inputs.containerfile ]]"
+    EXTRA_ARGS="$[[ inputs.kaniko-extra-args ]]"
+    KANIKO_ARGS="$CONTEXT $DOCKERFILE $CACHE $TARGET $EXTRA_ARGS --snapshot-mode=redo"
+
+    echo "Running /kaniko/executor --destination=$[[ inputs.image ]] $KANIKO_ARGS"
+
+    /kaniko/executor --destination=$[[ inputs.image ]] $KANIKO_ARGS
+  tags:
+  - $[[ inputs.runner ]]

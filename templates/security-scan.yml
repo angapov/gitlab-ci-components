@@ -1,0 +1,39 @@
+spec:
+  inputs:
+    containerfile:
+      default: Containerfile
+    image:
+      default: $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH
+    runner:
+      default: st1k8s01
+    dast-disable:
+      type: boolean
+      default: false
+---
+stages:
+- test
+- dast
+
+include:
+- template: Security/Container-Scanning.gitlab-ci.yml
+- template: Security/SAST.gitlab-ci.yml
+- template: Security/Dependency-Scanning.gitlab-ci.yml
+- template: Security/Secret-Detection.gitlab-ci.yml
+- template: Security/DAST.gitlab-ci.yml
+
+container_scanning:
+  variables:
+    GIT_STRATEGY: fetch
+    CS_IMAGE: $[[ inputs.image ]]
+    CS_QUIET: "true"
+    CS_IGNORE_UNFIXED: "true"
+    CS_DOCKERFILE_PATH: $[[ inputs.containerfile ]]
+    CS_DISABLE_LANGUAGE_VULNERABILITY_SCAN: "false"
+  tags:
+  - $[[ inputs.runner ]]
+
+dast:
+  variables:
+    DAST_DISABLED: $[[ inputs.dast-disable ]]
+  tags:
+  - $[[ inputs.runner ]]
